@@ -6,6 +6,7 @@
 using namespace std;
 #include <g4root.hh>
 #include <G4SteppingVerbose.hh>
+#include <G4SteppingManager.hh>
 /**
  * Output simulation results to screen or a file.
  */
@@ -17,13 +18,15 @@ class Output : public G4SteppingVerbose
     Output(); ///< Create analysis manager to handle output
     ~Output() { delete G4AnalysisManager::Instance(); }
     void TrackingStarted() { G4SteppingVerbose::TrackingStarted();
-      Record(); } ///< Infomation of step 0 (initStep)
+      Record(); } ///< Information of step 0 (initStep)
     void StepInfo() { G4SteppingVerbose::StepInfo();
-      Record(); } ///< Infomation of steps>0 
+      Record(); } ///< Information of steps>0 
     void Reset() { trk.clear(); stp.clear(); vlm.clear(); pro.clear();
       pdg.clear(); pid.clear(); xx.clear(); yy.clear(); zz.clear(); dt.clear();
       de.clear(); dl.clear(); l.clear(); x.clear(); y.clear(); z.clear();
       t.clear(); k.clear(); p.clear(); q.clear(); et.clear(); }
+    void SetSteppingVerbose(int level) { fManager->SetVerboseLevel(level); }
+    int GetSteppingVerbose() { return fManager->GetverboseLevel(); }
 
     vector<int> trk;   ///< track ID
     vector<int> stp;   ///< step number
@@ -83,7 +86,8 @@ Output::Output(): G4SteppingVerbose()
 #include <G4NavigationHistory.hh>
 void Output::Record()
 {
-  if (GetSilent()==1) CopyState(); // point fTrack, fStep, etc. to right places
+  if (GetSilent()==1) // CopyState() won't be called in G4SteppingVerbose
+    CopyState(); // point fTrack, fStep, etc. to right places
 
   G4TouchableHandle handle = fStep->GetPreStepPoint()->GetTouchableHandle();
   int copyNo=handle->GetReplicaNumber();
@@ -271,13 +275,12 @@ G4MaterialPropertiesTable* LineProcessor::CreateMaterialPropertiesTable(
 {
   bool photonEnergyUnDefined=true;
   int cnt=0; // number of photon energy values
-  double *energies; // photon energy values
+  double *energies=NULL; // photon energy values
   G4MaterialPropertiesTable *table = new G4MaterialPropertiesTable();
   for (size_t i=idxOfWords; i<words.size(); i++) {
     G4String property = words[i]; property.toUpper();
-    if (property=="SCINTILLATIONYIELD" || property=="RESOLUTIONSCALE"
-        || property=="FASTTIMECONSTANT" || property=="SLOWTIMECONSTANT"
-        || property=="YIELDRATIO" || property=="WLSTIMECONSTANT") {
+    if (property.contains("SCINTILLATIONYIELD") || property=="RESOLUTIONSCALE"
+        || property.contains("FASTTIMECONSTANT") || property=="YIELDRATIO") {
       table->AddConstProperty(property, G4tgrUtils::GetDouble(words[i+1]));
       G4cout<<"GEARS: "<<property<<"="<<words[i+1]<<G4endl;
       i++; // property value has been used
@@ -359,7 +362,7 @@ G4VPhysicalVolume* TextDetectorBuilder::ConstructDetector(
     int copyNo2 = atoi(border->v2.substr(border->v2.find(":")+1).data());
     G4LogicalVolume *m1=tgbVolmgr->FindG4PhysVol(physV1)->GetMotherLogical();
     G4LogicalVolume *m2=tgbVolmgr->FindG4PhysVol(physV2)->GetMotherLogical();
-    // search for phyiscs volumes on the sides of the border
+    // search for physics volumes on the sides of the border
     G4VPhysicalVolume *v1=0, *v2=0;
     for (int i=0; i<(int)m1->GetNoDaughters(); i++) {
       v1 = m1->GetDaughter(i);
@@ -391,8 +394,8 @@ G4VPhysicalVolume* TextDetectorBuilder::ConstructDetector(
  *
  * This uses two types of instructions to construct a detector: 
  *
- * - [Geant4 text geometry](http://www.geant4.org/geant4/sites/geant4.web.cern.ch/files/geant4/collaboration/working_groups/geometry/docs/textgeom/textgeom.pdf)
- * - [GDML](http://lcgapp.cern.ch/project/simu/framework/GDML/gdml.html)
+ * - [Geant4 text geometry](http://geant4-userdoc.web.cern.ch/geant4-userdoc/UsersGuides/ForApplicationDeveloper/html/Detector/Geometry/geomASCII.html)
+ * - [GDML](http://geant4-userdoc.web.cern.ch/geant4-userdoc/UsersGuides/ForApplicationDeveloper/html/Detector/Geometry/geomXML.html)
  *
  * It won't work together with HP neutron simulation if Geant4 version is lower
  * than 10 because of this bug:
@@ -520,9 +523,14 @@ class RunAction : public G4UserRunAction
 {
   public:
     void BeginOfRunAction (const G4Run*) { 
-      auto a = G4AnalysisManager::Instance();
-      if (a->GetFileName()!="") a->OpenFile();
-    } ///< Open output file
+      auto a = G4AnalysisManager::Instance(); if (a->GetFileName()=="") return; 
+      a->OpenFile();
+      Output* o = ((Output*) G4VSteppingVerbose::GetInstance()); 
+      if (o->GetSteppingVerbose()==0) { // in case of /tracking/verbose 0
+        o->SetSilent(1); // avoid screen dump
+        o->SetSteppingVerbose(1);//enable calling StepInfo() in G4SteppingManager
+      }
+    } ///< enable output if output file name is not empty
     void EndOfRunAction (const G4Run*) {
       auto a = G4AnalysisManager::Instance();
       if (a->GetFileName()!="") { a->Write(); a->CloseFile(); }
@@ -530,32 +538,25 @@ class RunAction : public G4UserRunAction
 };
 //______________________________________________________________________________
 //
-#include <G4EventManager.hh>
+void SaveAndResetEvent()
+{
+  auto a = G4AnalysisManager::Instance();
+  Output* o = ((Output*) G4VSteppingVerbose::GetInstance()); 
+  if (a->GetFileName()!="" && o->stp.size()!=0) {
+    a->FillNtupleIColumn(0,o->stp.size());
+    a->FillNtupleIColumn(1,o->et.size()-1);
+    a->AddNtupleRow();
+  } // save n-tuple if it is not empty and output file name is specified
+  o->Reset(); // reset Output member variables for new record
+} ///< save and then reset an event
+//______________________________________________________________________________
+//
 #include <G4UserEventAction.hh>
 /**
  * Book keeping before and after an event.
  */
 class EventAction : public G4UserEventAction
-{
-  public:
-    void BeginOfEventAction(const G4Event*) {
-      // use G4SteppingVerbose for recording, but silently
-      if (fpEventManager->GetTrackingManager()->GetVerboseLevel()==0) {
-        fpEventManager->GetTrackingManager()->SetVerboseLevel(1);
-        G4VSteppingVerbose::GetInstance()->SetSilent(1);
-      }
-      // reset Output member variables for new record
-      ((Output*) G4VSteppingVerbose::GetInstance())->Reset(); 
-    } ///< Prepare for recording
-    void EndOfEventAction(const G4Event*) {
-      auto a = G4AnalysisManager::Instance(); if (a->GetFileName()=="") return;
-      Output* o = ((Output*) G4VSteppingVerbose::GetInstance()); 
-      if (o->stp.size()==0) return; // skip an empty event
-      a->FillNtupleIColumn(0,o->stp.size());
-      a->FillNtupleIColumn(1,o->et.size()-1);
-      a->AddNtupleRow();
-    } ///< Fill n-tuple if output file name is specified
-};
+{ public: void EndOfEventAction(const G4Event*) { SaveAndResetEvent(); } };
 //______________________________________________________________________________
 //
 #include <G4UserStackingAction.hh>
@@ -566,12 +567,12 @@ class EventAction : public G4UserEventAction
 class StackingAction : public G4UserStackingAction, public G4UImessenger
 {
   private:
-    double fCurrentT; ///< current time in a decay chain
+    double fT0; ///< reference time for splitting decay chain
     double fTimeWindow; ///< time window to split a decay chain
     G4UIcmdWithADoubleAndUnit *fCmdT; ///< UI cmd to set time window
   public:
     StackingAction() : G4UserStackingAction(), G4UImessenger(),
-    fCurrentT(0), fTimeWindow(0), fCmdT(0) {
+    fT0(0), fTimeWindow(0), fCmdT(0) {
       fCmdT = new G4UIcmdWithADoubleAndUnit("/grdm/setTimeWindow", this);
       fCmdT->SetGuidance("Time window to split a radioactive decay chain.");
       fCmdT->SetGuidance("If a daughter nucleus appears after the window,");
@@ -583,23 +584,16 @@ class StackingAction : public G4UserStackingAction, public G4UImessenger
     } ///< created macro /grdm/setTimeWindow
     ~StackingAction() { delete fCmdT; }
     G4ClassificationOfNewTrack ClassifyNewTrack(const G4Track *trk) { 
-      G4ClassificationOfNewTrack stack = fUrgent;
-      if (fTimeWindow<=0) return stack; // disable splitting
-      // time starts to tick at the first decay
-      if (trk->GetParentID()==1) fCurrentT=trk->GetGlobalTime();
-      if (trk->GetGlobalTime()>fCurrentT+fTimeWindow) stack=fWaiting;
-      fCurrentT=trk->GetGlobalTime(); // update current time
-      return stack;
-    } ///< send a daughter nuleus to waiting stack if it appears too late
-    void NewStage() {
-      if (fTimeWindow<=0) return; // disable splitting
-      auto a = G4AnalysisManager::Instance(); if (a->GetFileName()=="") return;
+      if (fTimeWindow<=0) return fUrgent; // no need to split
+      if (trk->GetGlobalTime()>fT0+fTimeWindow) return fWaiting; // split
+      else return fUrgent; // too fast to be split
+    } ///< send a daughter particle to waiting stack if it appears too late
+    void NewStage() { // called after processing urgent trk, before waiting trk
+      if (fTimeWindow<=0) return; // do nothing if no time window is specified
       Output* o = ((Output*) G4VSteppingVerbose::GetInstance()); 
-      a->FillNtupleIColumn(0,o->stp.size());
-      a->FillNtupleIColumn(1,o->et.size()-1);
-      a->AddNtupleRow();
-      o->Reset();
-    } ///< save parent and reset output before tracking the daughter nucleus
+      fT0 = o->t.back(); // update the reference time to the latest decay time
+      SaveAndResetEvent(); // end an event manually
+    } ///< save and reset output before processing waiting tracks
     void SetNewValue(G4UIcommand* cmd, G4String value)
     { if (cmd!=fCmdT) return; fTimeWindow = fCmdT->GetNewDoubleValue(value); }
 };
@@ -646,7 +640,7 @@ class RunManager : public G4RunManager, public G4UImessenger
         SetUserInitialization(fFactory->GetReferencePhysList("QGSP_BERT"));
       }
       G4RunManager::InitializePhysics(); // call the original function
-      // has to be called after physics initilization
+      // has to be called after physics initialization
       SetUserAction(new Generator);
       SetUserAction(new RunAction);
       SetUserAction(new EventAction);
@@ -655,6 +649,7 @@ class RunManager : public G4RunManager, public G4UImessenger
 };
 //______________________________________________________________________________
 //
+#include <G4ScoringManager.hh>
 #include <G4VisExecutive.hh>
 #include <G4UIExecutive.hh>
 #include <G4UImanager.hh> // needed for g4.10 and above
@@ -666,6 +661,7 @@ int main(int argc, char **argv)
   // inherit G4SteppingVerbose instead of G4UserSteppingAction to record data
   G4VSteppingVerbose::SetInstance(new Output); // must be before run manager
   RunManager* run = new RunManager; // customized run control
+  G4ScoringManager::GetScoringManager(); // enable built-in scoring cmds
   G4VisManager* vis = new G4VisExecutive("quiet"); // visualization
   vis->Initialize();
   // select mode of execution

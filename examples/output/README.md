@@ -3,11 +3,12 @@
 [![Step point](https://img.shields.io/badge/step-point-red?style=flat)](#step-point)
 [![Detected energy](https://img.shields.io/badge/total-energy-magenta?style=flat)](#total-energy)
 [![Data analysis](https://img.shields.io/badge/data-analysis-orange?style=flat)](#data-analysis)
+[![Detector hits](https://img.shields.io/badge/detector-hits-blue?style=flat)](#combine-step-points-to-hits-in-detector)
 
 ## Output
 Generally speaking, the [visualization](../detector/#detector-visualization) of [detector](../detector) [geometry](../detector/#detector-construction) and the [screen dump](#screen-dump) of a [Geant4][] application can be all regarded as output of a [Geant4][] simulation. Strictly speaking, the output of a [Geant4][] simulation includes [histograms][] and/or [ntuples][] of [data][] generated during the simulation, which can be used to reveal statistical distributions of, for example, positions and energy depositions of interactions.
 
-[GEARS][] utilizes [Geant4 analysis managers]({{site.g4doc}}/Analysis/managers.html) to provide four output formats: [ROOT][] (default), [HDF5][], CSV, and [AIDA][] XML. The output file format can be chosen using the following command:
+[GEARS][] utilizes [Geant4 analysis managers](http://geant4-userdoc.web.cern.ch/geant4-userdoc/UsersGuides/ForApplicationDeveloper/html/Analysis/managers.html) to provide four output formats: [ROOT][] (default), [HDF5][], CSV, and [AIDA][] XML. The output file format can be chosen using the following command:
 
 ~~~sh
 $ make hdf5 # create ghdf5.cc from gears.cc
@@ -17,7 +18,7 @@ $ make # compile ghdf5.cc
 The output file name can be chosen using the macro command:
 
 ~~~
-/analysis/setFileName output
+/analysis/setFileName gears
 ~~~
 
 No suffix is needed for the file name. Note that the **output is disabled by default**. It will be enabled if the output file name is not empty. So this macro command also works as a switch. Without it, no output file will be created.
@@ -33,7 +34,7 @@ No suffix is needed for the file name. Note that the **output is disabled by def
 
 ### Screen dump
 
-[Geant4][] can print out on screen detailed information of a simulation if you increase the verbose level of tracking using the macro command [/tracking/verbose]({{site.g4doc}}/Control/AllResources/Control/UIcommands/_tracking_.html), for example,
+[Geant4][] can print out on screen detailed information of a simulation if you increase the verbose level of tracking using the macro command [/tracking/verbose](http://geant4-userdoc.web.cern.ch/geant4-userdoc/UsersGuides/ForApplicationDeveloper/html/Control/AllResources/Control/UIcommands/_tracking_.html), for example,
 
 ```sh
  # turn on detailed information about tracking
@@ -69,10 +70,10 @@ The [ROOT][] [TTree][] offers the following features that are desired for analyz
 Here are some example codes that can be run in a ROOT interactive session to generate histograms:
 
 ```sh
-$ root output.root # open the output file in root format using ROOT
+$ root gears.root # open the output file in root format using ROOT
 root [] .ls
-TFile**         output.root
- TFile*         output.root
+TFile**         gears.root
+ TFile*         gears.root
    KEY: TTree    t;1     Geant4 step points
 root [] t->GetEntries()
 (long long) 5000
@@ -104,6 +105,68 @@ root [] t->Show(0)
 root [] t->Draw("x","k*(pdg==22)")
 ```
 
+### Python
+
+[ROOT][] is less known than [Python][] outside of the high energy physics community. The good news for people who are not familiar with [ROOT][] is that [GEARS][] does not depend on [ROOT][] to compile or run, even though its output can be saved in [ROOT][] [TTree][] format, and that the analysis of [GEARS][] output can be done in [Python][] instead of [ROOT][] thanks to the [uproot][] [Python][] package. The best way to get started with analyzing [GEARS][] output in Python would be to follow the [uproot tutorial](https://uproot4.readthedocs.io/en/latest/basic.html) after the [installation of uproot](https://uproot4.readthedocs.io/en/latest/).
+
+If you are familiar with [ROOT][] and would like to migrate to [Python][] for analyzing [GEARS][] output, you can find here a brief list of [Python][] equivalence of [ROOT][] commands:
+
+- Open file:
+  - [ROOT][]:
+```sh
+$ root gears.root # open gears output in ROOT format
+```
+  - [Python][]:
+```python
+$ python
+>>> import uproot4 as up # or import uproot for older versions of uproot
+>>> file = up.open("gears.root")
+```
+- Check file contents:
+  - [ROOT][]:
+```sh
+[root] .ls
+```
+  - [Python][]:
+```python
+>>> file.classnames()
+```
+- List variables in [TTree][] [ntuples][]:
+  - [ROOT][]:
+```sh
+[root] t->Show()
+```
+  - [Python][]:
+```python
+>>> t = file['t'] # get TTree object 't' from file
+>>> t.show() # show the variables saved in the tree
+```
+- Draw the distribution of a variable as a histogram:
+  - [ROOT][]:
+```sh
+[root] t->Draw("x")
+```
+  - [Python][]:
+```python
+>>> b = t.arrays(namedecode='utf-8') # get branches from the tree
+>>> import matplotlib.pyplot as plot
+>>> plot.hist(b['x'].flatten(),bins=100) # draw leaf, x, on branch, b
+>>> plot.show()
+```
+- Draw the distribution of a selected subset of the variable as a histogram:
+  - [ROOT][]:
+```sh
+[root] t->Draw("x", "vlm==1") // draw x coordinate of step points in volume 1
+```
+  - [Python][]:
+```python
+>>> selection = b['vlm'] == 1 # select step points in volume 1
+>>> plot.hist(b['x'][selection],bins=100) # draw x coordinate of those points
+>>> plot.show()
+```
+[Python]: https://www.python.org/
+[uproot]: https://github.com/scikit-hep/uproot4
+
 ## Step point
 
 [Geant4][] tracks a particle step by step as it passes through the [simulated world](../detector) until it goes out of it, gets absorbed in a material, or changes to other particles, as shown in the following figure. A step point is a point in a particle track where the particle is generated or changed.
@@ -119,7 +182,7 @@ A step point in [GEARS][] contains the following information:
 * Detector volume copy number (`vlm` in short)
 * [Process id](#process-id) (`pro` in short)
 * [Particle id](#particle-id) (`pdg` in short)
-* Particle id of the parent particle (`pid` in short)
+* Track id of the parent particle (`pid` in short)
 * Local position `xx` [mm] (origin: center of the volume)
 * Local position `yy` [mm] (origin: center of the volume)
 * Local position `zz` [mm] (origin: center of the volume)
@@ -193,7 +256,7 @@ The physics process generating each step point is saved in a variable `pro[i]`, 
 
 ### Particle id
 
-The type of particle related to a step point is saved in a variable `pdg`. It is the same as the [PDG encoding](http://pdg.lbl.gov/current/mc-particle-id) of the particle. A Google search will give more information about it. The name `pid` is used for the parent particle's PDG encoding.
+The type of particle related to a step point is saved in a variable `pdg`. It is the same as the [PDG encoding](http://pdg.lbl.gov/current/mc-particle-id) of the particle. A Google search will give more information about it. The name `pid` is used for the parent particle's track id.
 
 ### Record information of step 0
 
@@ -238,15 +301,15 @@ root [] t->Draw("et[1]")
 ```
 ## Data analysis
 
-One can use the following command to generate `output.root` in [GEARS][]/[examples](..)/[output]({{site.file}}/examples/output)/:
+One can use the following command to generate `gears.root` in [GEARS][]/[examples](..)/[output](.)/:
 
 ```sh
 $ gears radiate.mac
 ```
 
-[radiate.mac]({{site.file}}/examples/output/radiate.mac) demonstrates how to use [Geant4][] [macro commands]({{site.g4doc}}/Control/AllResources/Control/UIcommands/_.html) to save [step points](#step-point) and [total energies in sensitive volumes](#total-energy). It uses the [detector geometry](../detector) defined in [detector.tg]({{site.file}}/examples/output/detector.tg).
+[radiate.mac](radiate.mac) demonstrates how to use [Geant4][] [macro commands](http://geant4-userdoc.web.cern.ch/geant4-userdoc/UsersGuides/ForApplicationDeveloper/html/Control/AllResources/Control/UIcommands/_.html) to save [step points](#step-point) and [total energies in sensitive volumes](#total-energy). It uses the [detector geometry](../detector) defined in [detector.tg](detector.tg).
 
-Here are some sample [ROOT][] commands that one can use to generate plots from `output.root`:
+Here are some sample [ROOT][] commands that one can use to generate plots from `gears.root`:
 
 ```cpp
 // draw tracks of the primary particle on x-y plane in event 1
@@ -266,3 +329,21 @@ root[] t->Draw("de/dl:p")
 // draw energy spectrum recorded by volume (detector) 1
 root[] t->Draw("et[1]")
 ```
+
+## Combine step points to hits in detector
+
+Many of the step points in a Geant4 simulation are very close to each other, especially those of charged particles, as they quickly lose energy through multiple scattering or ionizing surrounding atoms in a very small range.  The space resolution of a real-life detector is normally not enough to resolve these details. As seen by such a detector, all nearby step points act as a single hit, the energy of which is a sum of deposited energies from all these step points, the position of which is an energy-weighted average of all these step point positions. The modeling of detector response normally start with combined hits instead of the original step points directly from Geant4 to save computational power.
+
+A ROOT script [combineStepPointsToHits.C](combineStepPointsToHits.C), is provided to demonstrate the combining procedure. It takes the output from [GEARS][] and save the combined hits to another ROOT file `hits.root`. Another ROOT script, [drawHits.C](drawHits.C), is used to demonstrate the final result shown in the following plot.
+
+<img src="combinedHits.png" alt="combined hits" style="width:100%">
+
+These ROOT scripts can be directly executed without compilation:
+
+```sh
+$ root -q combineStepPointsToHits.C
+$ root drawHits.C
+```
+
+Note that they have to be run after you execute `gears radiate.mac`, since they need the Geant4 output as input.
+
